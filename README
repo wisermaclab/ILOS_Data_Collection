@@ -1,6 +1,8 @@
 *****************************
 IMPORTANT
 *****************************
-1. Dataset as mentioned in the workshop data submission is contained in the Data Set folder
-2. This is an android studio project
-3. An overview of project strucutre can be viewed by opening the JavaDoc
+1. Fingerprinting dataset as outlined in the workshop data submission contained in the Data Set folder
+2. This repository is an Android studio project
+3. An overview of Android studio project strucutre can be viewed by opening the JavaDoc
+
+Data Collection Tool created by Mitchell Cooke @ McMaster university
