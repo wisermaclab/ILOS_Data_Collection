@@ -56,6 +56,18 @@
             android:textColor="#FFFFFF" />
 
     </LinearLayout>
+    <CheckBox
+        android:id="@+id/EnableTurnCheckBox"
+        android:layout_width="98dp"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:layout_marginStart="8dp"
+        android:checked="false"
+        android:text="Enable Turns"
+        android:textAppearance="@style/TextAppearance.AppCompat.Caption"
+        android:visibility="visible"
+        mapbox:layout_constraintBottom_toBottomOf="parent"
+        mapbox:layout_constraintStart_toStartOf="parent" />
 
     <LinearLayout
         android:id="@+id/nameLinLay"

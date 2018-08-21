@@ -142,6 +142,18 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
     List<String> magOutput = new ArrayList<>();
     SensorEventListener listener;
     float SENSITIVITY;
+    public static boolean allowPDRMovement;
+    List<LatLng> stepCoordsPDR = new ArrayList<>();
+    List<Double> stepHeadings = new ArrayList<>();
+    List<LatLng> scanCoordsPDR = new ArrayList<>();
+    List<Long> scanTimeStampListCheck = new ArrayList<>();
+    LatLng currentCheckPoint;
+    double currentHeading;
+    GyroHeading gyroHeading;
+    boolean enableGyro = false;
+    List<Long> checkPointTimeStamps = new ArrayList<>();
+    public static List<Double> mapHeadings= new ArrayList<>();
+    public static List<LatLng> mapCheckPoints= new ArrayList<>();
 
     /**
      *  Basic onCreate used to instantiate UI elements and create checkbox listeners
@@ -184,6 +196,16 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
         simpleStepDetector = new StepDetector();
         if(SENSITIVITY == 0.0){
             SENSITIVITY = 20f;
+        }
+        if(!allowPDRMovement) {
+            getMotionInfo();
+        }
+        else{
+            getMotionInfo();
+            stepCoordsPDR.add(new LatLng(startLat, startLong));
+            stepHeadings.add((double)mapHeadings.get(0));
+            //Very large number of steps
+            totalNumSteps = 100000000;
         }
         simpleStepDetector.STEP_THRESHOLD = SENSITIVITY;
         System.out.println(simpleStepDetector.STEP_THRESHOLD);
@@ -257,9 +279,18 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
                             magTimeStamps.remove(magTimeStamps.size()-1);
                             magCompList.remove(magCompList.size()-1);
                         }
-                        processScanCoordinates(scanTimeStampListRemoved, 0);
-                        processScanCoordinates(magTimeStamps , 1);
-                        storeData();
+                        if(allowPDRMovement){
+                            checkPointTimeStamps.add(SystemClock.elapsedRealtimeNanos()/1000);
+                            //Must process scan coordinates differently here
+                            processScanCoordinatesForMultiPath(scanTimeStampListRemoved);
+                            saveMultiPathPoints();
+                            storeMultiPathData();
+                        }
+                        else {
+                            processScanCoordinates(scanTimeStampListRemoved, 0);
+                            processScanCoordinates(magTimeStamps, 1);
+                            storeData();
+                        }
                         switchChecked = false;
                         clickCounter = 0;
                     }
@@ -272,6 +303,12 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
                 }
                 else{ // The start of collection whe switch is first flipped on
                     //To start off sets the adaptive step time as the average step time over collection path
+                    if(allowPDRMovement){
+                        checkPointTimeStamps.add(SystemClock.elapsedRealtimeNanos()/1000);
+                        gyroHeading = new GyroHeading();
+                        currentHeading = mapHeadings.get(0);
+                        currentCheckPoint = mapCheckPoints.get(1);
+                    }
                     STEP_TIME_ADAPTIVE = STEP_TIME_ORIGINAL;
                     //Timestamps when the program starts onto the list of step locations
                     adaptiveTimeList.add(SystemClock.elapsedRealtimeNanos()/1000);
@@ -467,6 +504,30 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
     }
 
     /**
+     * Used to find the distance between two points and the givent ratio between degrees and metres between them
+     * @param point1
+     * @param point2
+     * @return
+     */
+    double[] findDistance(LatLng point1, LatLng point2){
+        double degreeDistance = Math.sqrt(Math.pow((point1.getLatitude() - point2.getLatitude()),2) + Math.pow((point1.getLongitude() - point2.getLongitude()),2));
+        double R = 6378.137; // Radius of earth in KM
+        double dLat = point1.getLatitude() * Math.PI / 180 - point2.getLatitude()* Math.PI / 180;
+        dLat = Math.abs(dLat);
+        double dLon = point1.getLongitude() * Math.PI / 180 - point2.getLongitude()* Math.PI / 180;
+        dLon = Math.abs(dLon);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(point2.getLatitude() * Math.PI / 180) * Math.cos(point1.getLatitude()* Math.PI / 180) *
+                        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        double distance;
+        distance = R * c;
+        distance = distance * 1000f;
+        double degToMRatioReturn = degreeDistance/distance;
+        double[] output = new double[]{distance, degToMRatioReturn};
+        return output;
+    }
+    /**
      * Updates the coordinates of the user after each step based on degrees to metres conversion and the orientation of the walking path
      * @param stepType
      */
@@ -493,6 +554,153 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
         }
     }
 
+    /**
+     * Checks the angle at which a user has turned through for when a turn is expected
+     * @param expectedAngle
+     * @param currentAngle
+     * @return
+     */
+    boolean checkGyroAngle(double expectedAngle, double currentAngle){
+        expectedAngle = (Math.toDegrees(expectedAngle) + 360)%360;
+        currentAngle = (currentAngle + 360)%360;
+        System.out.println("TURNED TURN ANGLE" + currentAngle);
+        System.out.println("TURNED EXPECTED ANGLE" + Math.toDegrees(expectedAngle));
+        System.out.println("TURNED TURN DIFF " + (expectedAngle - currentAngle));
+        if(Math.abs(expectedAngle - currentAngle) < 5){
+            gyroHeading.resetSpeeds();
+            return true;
+        }
+        else{
+            return false;
+        }
+    }
+
+    /**
+     * Called when user has turned through a large enough angle to warrant a turn
+     */
+    void newTurn(){
+        //Called when the gyroscope detects a turn angle near the expected turn angle
+        long currentTime = SystemClock.elapsedRealtimeNanos()/1000;
+
+        checkPointTimeStamps.add(currentTime);
+        lat = currentCheckPoint.getLatitude();
+        displayLat = currentCheckPoint.getLatitude();
+        lon = currentCheckPoint.getLongitude();
+        dispalyLon = currentCheckPoint.getLongitude();
+        currentHeading = mapHeadings.get(mapHeadings.indexOf(currentHeading) + 1);
+
+        currentCheckPoint = mapCheckPoints.get(mapCheckPoints.indexOf(currentCheckPoint)+1);
+        System.out.println("TURNED HERE");
+        System.out.println("TURNED CURRENT HEADING " + currentHeading);
+        System.out.println("TURNED LAT AND LON" + lat +  ", " + lon);
+        enableGyro = false;
+        gyroHeading = new GyroHeading();
+    }
+
+    /**
+     * Handles step events for multiple turn motion
+     */
+    void multiPathMovement(){
+        //Called during steps
+        stepHeadings.add(currentHeading);
+        System.out.println("TURNED angle " + currentHeading);
+        double xCompMotion = Math.cos(currentHeading);
+        double yCompMotion = Math.sin(currentHeading);
+        System.out.println("TURNED COMPS " + xCompMotion + "," + yCompMotion + "," + degToMRatio);
+        lat = lat + STEP_LENGTH * yCompMotion * degToMRatio;
+        displayLat = displayLat + STEP_LENGTH*yCompMotion*degToMRatio;
+        lon = lon + STEP_LENGTH * xCompMotion * degToMRatio;
+        dispalyLon= dispalyLon + STEP_LENGTH*xCompMotion*degToMRatio;
+        stepCoordsPDR.add(new LatLng(lat, lon));
+
+        //y is sin of theta
+        //x is cos of theta
+        System.out.println("TURNED INFO " + findDistance(new LatLng(lat, lon), currentCheckPoint)[0] + ", " + currentCheckPoint.toString());
+        if(!enableGyro && mapCheckPoints.indexOf(currentCheckPoint)!=mapCheckPoints.size()-1 && mapHeadings.indexOf(currentHeading)!=mapHeadings.size()-1 && findDistance(new LatLng(lat, lon), currentCheckPoint)[0] < 1.5*STEP_LENGTH){
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Toast.makeText(getBaseContext(), "TURN NOW", Toast.LENGTH_SHORT).show();
+                }
+            });
+            enableGyro = true;
+        }
+        else if(enableGyro && findDistance(new LatLng(lat, lon), currentCheckPoint)[0] > 1.5*STEP_LENGTH){
+            newTurn();
+        }
+        else if(mapCheckPoints.indexOf(currentCheckPoint)==mapCheckPoints.size()-1 && mapHeadings.indexOf(currentHeading)==mapHeadings.size()-1 &&findDistance(new LatLng(lat, lon), currentCheckPoint)[0] < 1*STEP_LENGTH){
+            //Display for last checkpoint only
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Toast.makeText(getBaseContext(), "END COLLECTION", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+    }
+
+    /**
+     * Processes scan coordinates for the multi-path movement
+     * @param scanTimeStampList
+     */
+    void processScanCoordinatesForMultiPath(List<Long> scanTimeStampList){
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                scanText.setText("Collection Complete!" + "\n" + "Data Stored");
+                wifiText.setText("");
+            }
+        });
+        //Treat as n number of individual paths
+        //new function for tagging individual coords for each scan from multi path navigation
+        for (int i = 0; i < scanTimeStampList.size(); i++) {
+            long macIDTime = scanTimeStampList.get(i);
+            for (int j = 0; j < adaptiveTimeList.size() - 1; j++) {
+                long lowerTimeBound = adaptiveTimeList.get(j);
+                long upperTimeBound = adaptiveTimeList.get(j + 1);
+                if (macIDTime <= upperTimeBound && macIDTime > lowerTimeBound) {
+                    //If the scan falls within the range of a certain step
+                    LatLng prevStep = stepCoordsPDR.get(j);
+                    double headingOnStep = stepHeadings.get(j);
+                    long checkPointTimeStamp = checkPointTimeStamps.get(mapHeadings.indexOf(headingOnStep)+1);
+                    double tempLat;
+                    double tempLon;
+                    if(lowerTimeBound < checkPointTimeStamp  && upperTimeBound > checkPointTimeStamp && checkPointTimeStamps.indexOf(checkPointTimeStamp) != checkPointTimeStamps.size()){
+                        //TODO currently removes points here as when a turn occurs, there is uncertainty for wifi signals as phone's orientation changes
+                        //TODO after the turn occurs, it sets the user's position to the turn point, therefore there is less position uncertainty
+                        tempLat = -1;
+                        tempLon = -1;
+                    }
+                    else {
+                        tempLat = prevStep.getLatitude() + STEP_LENGTH * ((double) (macIDTime - lowerTimeBound)) / ((double) (upperTimeBound - lowerTimeBound)) * Math.sin(headingOnStep) * findDistance(prevStep, mapCheckPoints.get(mapHeadings.indexOf(headingOnStep)+1))[1];
+                        tempLon = prevStep.getLongitude() + STEP_LENGTH * ((double) (macIDTime - lowerTimeBound)) / ((double) (upperTimeBound - lowerTimeBound)) * Math.cos(headingOnStep) * findDistance(prevStep, mapCheckPoints.get(mapHeadings.indexOf(headingOnStep)+1))[1];
+                    }
+                    scanCoordsPDR.add(new LatLng(tempLat, tempLon));
+                }
+            }
+        }
+        //Re-writes coordinates in outputdata and the list of strings to post
+        for (int i = 0; i < outputDataRemoved.size(); i++) {
+            String line = outputDataRemoved.get(i);
+            String[] entries = line.split(",");
+            //Final hashmap for creating a single string for the entire path
+            //Entries at indices 2 and 3 represent latitude and longitude
+            entries[2] = Double.toString(scanCoordsPDR.get(i).getLatitude());
+            entries[3] = Double.toString(scanCoordsPDR.get(i).getLongitude());
+            String output = "";
+            if(!entries[2].equals("-1") && !entries[3].equals("-1")) {
+                for (int j = 0; j < entries.length; j++) {
+                    if (j == entries.length - 1) {
+                        output = output + entries[j];
+                    } else {
+                        output = output + entries[j] + ",";
+                    }
+                }
+                //Creates new output list by replacing the latitude and longitude in the original. This list will later be written to storage
+                replacedOutput.add(output);
+            }
+        }
+    }
     /**
      * Does post processing after all the data is collected. We-writes the coordinates in output data with correct coordinates based on time fractions between steps
      * @param scanTimeStampList
@@ -585,15 +793,15 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
      */
     void updateUI(){
         if(stepCount < totalNumSteps) {
-            if(firstAzimuth == 0f) {
+            if(allowPDRMovement){
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        scanText.setText(USER_NAME + "'s" + " Step Length: " + String.format("%.3f", STEP_LENGTH) + "m" + "\n" + "Scan #" + (clickCounter) + "\n" + BUILDING_NAME + " " + FLOOR_NUMBER + "\n" + "Number of Steps: " + Integer.toString(stepCount));
+                        scanText.setText(USER_NAME + "'s" + " Step Length: " + String.format("%.3f", STEP_LENGTH) + "m" + "\n" + "Distance from next turn: " + String.format("%.3f", findDistance(new LatLng(lat,lon), currentCheckPoint)[0]) + "m" + "\n" + "Scan #" + (clickCounter) + "\n" + BUILDING_NAME + " " + FLOOR_NUMBER + "\n" + "Number of Steps: " + Integer.toString(stepCount));
                     }
                 });
             }
-            else{
+            else {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -631,6 +839,19 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
                 }
                 if (switchChecked && event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
                     rotationSpeed = event.values[2];
+                    if(enableGyro){
+                        if(gyroHeading.getCorrespondingTimes().size()==0){
+                            gyroHeading.addTime(SystemClock.elapsedRealtimeNanos());
+                        }
+                        else{
+                            double gyroCheckAngle = currentHeading - mapHeadings.get(mapHeadings.indexOf(currentHeading) + 1);
+                            double heading = gyroHeading.sensorChanged(rotationSpeed, SystemClock.elapsedRealtimeNanos());
+                            if(checkGyroAngle(gyroCheckAngle, heading)){
+                                newTurn();
+                                enableGyro = false;
+                            }
+                        }
+                    }
                 }
                 //1.5 is arbitraty threshold for rotation speed that will alert the user to re-collect the data
                 if (rotationSpeed > 1.5) {
@@ -722,6 +943,57 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
     }
 
     /**
+     * Stores multi path turn data for display of previously collected data
+     *
+     */
+    void saveMultiPathPoints(){
+        List<String> pdrOutputPoints = new ArrayList<>();
+        for(int i = 0 ; i < mapCheckPoints.size(); i++){
+            pdrOutputPoints.add(Double.toString(mapCheckPoints.get(i).getLatitude()) + "," + Double.toString(mapCheckPoints.get(i).getLongitude()));
+        }
+        try {
+            File sdCard = Environment.getExternalStorageDirectory();
+            File directory = new File(sdCard.getAbsolutePath() + "/DataCollectPDRPath");
+            Log.i("Save Dir", sdCard.getAbsolutePath() + "/DataCollectPDRPath");
+            directory.mkdirs();
+            //Each path gets a unique name. This title is used at a different point in the app to draw out the colelcted paths
+            String filename = BUILDING_NAME + FLOOR_NUMBER + "(" + startLat + "," + startLong + ")" + "to" + "(" + endLat + "," + endLong + ")" + ".txt";
+            File file = new File(directory, filename);
+            PrintWriter out = new PrintWriter(file);
+            for(int i = 0; i < pdrOutputPoints.size(); i++){
+                out.write(pdrOutputPoints.get(i));
+                out.write("\r\n");
+            }
+            out.close();
+
+        }
+        catch(Exception e){}
+    }
+
+    /**
+     * Stores wifi signal information from multipath collection
+     */
+    void storeMultiPathData(){
+        try {
+            //save path data
+            File sdCard = Environment.getExternalStorageDirectory();
+            File directory = new File(sdCard.getAbsolutePath() + "/DataCollectPDRData");
+            Log.i("Save Dir", sdCard.getAbsolutePath() + "/DataCollectPDRData");
+            directory.mkdirs();
+            //Each path gets a unique name. This title is used at a different point in the app to draw out the colelcted paths
+            String filename = BUILDING_NAME + FLOOR_NUMBER + "(" + startLat + "," + startLong + ")" + "to" + "(" + endLat + "," + endLong + ")" + ".txt";
+            File file = new File(directory, filename);
+            PrintWriter out = new PrintWriter(file);
+            for (int i = 0; i < replacedOutput.size(); i++) {
+                out.write(replacedOutput.get(i));
+                out.write("\r\n");
+            }
+            out.close();
+        }
+        catch (Exception e){}
+    }
+
+    /**
      * Used to store sensor and wifi data in their respective folders on local storage
      */
     void storeData(){
@@ -764,8 +1036,25 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
      */
     @Override
     public void step(long timeNs) {
+        if(switchChecked && allowPDRMovement){
+            stepCount++;
+            if(stepCount <=3 && stepCount>=1){
+                //Adaptive time list is used to verify that the user is collecting data properly. If they speed up or slow down this can change step length
+                adaptiveTimeList.add(timeNs/1000);
+                //adaptiveTimeList.add(timeNs);
+            }
+            else if(stepCount >3){
+                STEP_TIME_ADAPTIVE = (timeNs/1000 - adaptiveTimeList.get(adaptiveTimeList.size()-3))/3;
+                adaptiveTimeList.add(timeNs/1000);
+                //adaptiveTimeList.add(timeNs);
+
+                //Divide b 10^6 to display in seconds
+                STEP_TIME_ADAPTIVE/=1000000;
+            }
+            multiPathMovement();
+        }
         //If we haven't walked the whole path yet
-        if(stepCount < (totalNumSteps -1) && switchChecked) {
+        if(stepCount < (totalNumSteps -1) && switchChecked && !allowPDRMovement) {
             stepCount++;
             if(stepCount <=3 && stepCount>=1){
                 //Adaptive time list is used to verify that the user is collecting data properly. If they speed up or slow down this can change step length

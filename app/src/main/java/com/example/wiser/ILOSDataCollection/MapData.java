@@ -72,6 +72,7 @@ public class MapData extends AppCompatActivity {
     EditText usersName;
     LinearLayout nameLinLay;
     int currentFloor = 1;
+    CheckBox pdrCheckBox;
     MapboxMap map;
     boolean serverUpload = false;
     public final static String MAPBOX_LAYER_STRING = "layer";
@@ -89,6 +90,8 @@ public class MapData extends AppCompatActivity {
     public final static String MAPBOX_STAIRCASE = "staircase";
     RetrieveCollectedPaths allPaths = null;
     public volatile TextView loadingText;
+    private List<LatLng> mapCheckPoints = new ArrayList<>();
+
 
     /**
      * Basic onCreate to instantiate UI and prepare mapBox map for display and click events
@@ -110,6 +113,25 @@ public class MapData extends AppCompatActivity {
         buildingLinLay = (LinearLayout)findViewById(R.id.buildingLinLays);
         buildingLinLay.setBackgroundColor(Color.WHITE);
         buildingLinLay.setAlpha((float)0.8);
+        pdrCheckBox = findViewById(R.id.EnableTurnCheckBox);
+        pdrCheckBox.setBackgroundColor(Color.WHITE);
+        pdrCheckBox.setAlpha(0.8f);
+        pdrCheckBox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                if(isChecked){
+                    mapClickCount = 0;
+                    map.clear();
+                    displayPDRPaths();
+                }
+                else{
+                    mapClickCount = 0;
+                    map.clear();
+                    drawCollectedPaths();
+                }
+            }
+        });
+
         //Initializes mapview for mapbox API
         mapView.getMapAsync(new OnMapReadyCallback() {
             @Override
@@ -121,19 +143,38 @@ public class MapData extends AppCompatActivity {
                     public void onMapLongClick(@NonNull LatLng point) {
                         mapClickCount++;
                         //Labels as start or end point based on how may times the user has places a marker
-                        if(mapClickCount <= 2) {
-                            if(mapClickCount == 1){
-                                markerTitle = "Start";
-                                startClick = point;
+                        if (pdrCheckBox.isChecked()) {
+                            if(mapClickCount == 1) {
+                                while(mapCheckPoints.size() > 0){
+                                    mapCheckPoints.remove(0);
+                                }
+                                mapCheckPoints.add(point);
+                                mapboxMap.addMarker(new MarkerOptions()
+                                        .position(new LatLng(point.getLatitude(), point.getLongitude()))
+                                        .title("Start")
+                                        .snippet(Double.toString(point.getLatitude()) + "," + Double.toString(point.getLongitude())));
                             }
                             else{
-                                markerTitle = "End";
-                                endClick = point;
+                                mapCheckPoints.add(point);
+                                mapboxMap.addMarker(new MarkerOptions()
+                                        .position(new LatLng(point.getLatitude(), point.getLongitude()))
+                                        .title("Checkpoint")
+                                        .snippet(Double.toString(point.getLatitude()) + "," + Double.toString(point.getLongitude())));
                             }
-                            mapboxMap.addMarker(new MarkerOptions()
-                                    .position(new LatLng(point.getLatitude(), point.getLongitude()))
-                                    .title(markerTitle)
-                                    .snippet(Double.toString(point.getLatitude()) + "," + Double.toString(point.getLongitude())));
+                        } else {
+                            if (mapClickCount <= 2) {
+                                if (mapClickCount == 1) {
+                                    markerTitle = "Start";
+                                    startClick = point;
+                                } else {
+                                    markerTitle = "End";
+                                    endClick = point;
+                                }
+                                mapboxMap.addMarker(new MarkerOptions()
+                                        .position(new LatLng(point.getLatitude(), point.getLongitude()))
+                                        .title(markerTitle)
+                                        .snippet(Double.toString(point.getLatitude()) + "," + Double.toString(point.getLongitude())));
+                            }
                         }
                     }
                 });
@@ -150,7 +191,12 @@ public class MapData extends AppCompatActivity {
             currentFloor++;
             map.clear();
             //Re-draws past paths
-            drawCollectedPaths();
+            if(pdrCheckBox.isChecked()){
+                displayPDRPaths();
+            }
+            else {
+                drawCollectedPaths();
+            }
             mapClickCount = 0;
             loopLayers();
         }
@@ -163,7 +209,12 @@ public class MapData extends AppCompatActivity {
         if(currentFloor < 8) {
             currentFloor--;
             map.clear();
-            drawCollectedPaths();
+            if(pdrCheckBox.isChecked()){
+                displayPDRPaths();
+            }
+            else {
+                drawCollectedPaths();
+            }
             mapClickCount = 0;
             loopLayers();
         }
@@ -226,6 +277,32 @@ public class MapData extends AppCompatActivity {
         try {
             //save data
             File sdCard = Environment.getExternalStorageDirectory();
+            File directory = new File(sdCard.getAbsolutePath() + "/DataCollectPDRPath");
+            directory.mkdirs();
+            String filename = "README.txt";
+            File file = new File(directory, filename);
+            PrintWriter out = new PrintWriter(file);
+            out.write("This folder contains the PDR collection points.");
+            out.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        try {
+            //save data
+            File sdCard = Environment.getExternalStorageDirectory();
+            File directory = new File(sdCard.getAbsolutePath() + "/DataCollectPDRData");
+            directory.mkdirs();
+            String filename = "README.txt";
+            File file = new File(directory, filename);
+            PrintWriter out = new PrintWriter(file);
+            out.write("This folder contains the PDR collection info.");
+            out.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        try {
+            //save data
+            File sdCard = Environment.getExternalStorageDirectory();
             File directory = new File(sdCard.getAbsolutePath() + "/DataCollect");
             Log.i("Save Dir", sdCard.getAbsolutePath() + "/DataCollect");
             directory.mkdirs();
@@ -260,20 +337,53 @@ public class MapData extends AppCompatActivity {
         WifiManager wifi = (WifiManager)getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         boolean profileExists = checkProfile();
         //will only run if the user has input enough information and all valid indormation
-        if(isLocationServiceEnabled() && startClick!=null && endClick!=null && buildingName.getText().toString().length() != 0 && usersName.getText().toString().length() != 0 &&  profileExists) {
+        if(isLocationServiceEnabled() && ((startClick!=null && endClick!= null) || mapCheckPoints.size()>1) && buildingName.getText().toString().length() != 0 && usersName.getText().toString().length() != 0 &&  profileExists) {
             Intent Intent = new Intent(this, WifiInfo.class);
-            //Gets angle that user should be heading in
-            double heading;
-            double headingY = (float)(endClick.getLongitude() - startClick.getLongitude());
-            double headingX = (float)(endClick.getLatitude() - startClick.getLatitude());
-            heading = Math.atan2(headingY, headingX);
-            heading = Math.toDegrees(heading);
+            if(endClick!=null) {
+                //Gets angle that user should be heading in
+                double heading;
+                double headingY = (float) (endClick.getLongitude() - startClick.getLongitude());
+                double headingX = (float) (endClick.getLatitude() - startClick.getLatitude());
+                heading = Math.atan2(headingY, headingX);
+                heading = Math.toDegrees(heading);
+                //Sets the static fields in wifi info
+                WifiInfo.expectedHeading = (float)heading;
+            }
+            while (WifiInfo.mapHeadings.size()>0){
+                WifiInfo.mapHeadings.remove(0);
+            }
+            while(WifiInfo.mapCheckPoints.size()>0){
+                WifiInfo.mapCheckPoints.remove(0);
+            }
+            if(pdrCheckBox.isChecked()){
+                WifiInfo.allowPDRMovement = true;
+                for(int i = 0; i < mapCheckPoints.size()-1; i++){
+                    double headingX = (float) (mapCheckPoints.get(i+1).getLongitude() - mapCheckPoints.get(i).getLongitude());
+                    double headingY = (float) (mapCheckPoints.get(i+1).getLatitude() - mapCheckPoints.get(i).getLatitude());
+                    double heading = Math.atan2(headingY,headingX);
+                    WifiInfo.mapHeadings.add(heading);
+                    WifiInfo.mapCheckPoints.add(mapCheckPoints.get(i));
+                    System.out.println("HEADING " + Math.toDegrees(heading));
+                }
+                WifiInfo.mapCheckPoints.add(mapCheckPoints.get(mapCheckPoints.size()-1));
+
+            }
+            else{
+                WifiInfo.allowPDRMovement = false;
+            }
             //Sets the static fields in wifi info
-            WifiInfo.expectedHeading = (float)heading;
-            WifiInfo.startLat = startClick.getLatitude();
-            WifiInfo.startLong = startClick.getLongitude();
-            WifiInfo.endLat = endClick.getLatitude();
-            WifiInfo.endLong = endClick.getLongitude();
+            if(!pdrCheckBox.isChecked()) {
+                WifiInfo.startLat = startClick.getLatitude();
+                WifiInfo.startLong = startClick.getLongitude();
+                WifiInfo.endLat = endClick.getLatitude();
+                WifiInfo.endLong = endClick.getLongitude();
+            }
+            else{
+                WifiInfo.startLat = mapCheckPoints.get(0).getLatitude();
+                WifiInfo.startLong = mapCheckPoints.get(0).getLongitude();
+                WifiInfo.endLat = mapCheckPoints.get(mapCheckPoints.size()-1).getLatitude();
+                WifiInfo.endLong = mapCheckPoints.get(mapCheckPoints.size()-1).getLongitude();
+            }
             WifiInfo.FLOOR_NUMBER = Integer.toString(currentFloor);
             WifiInfo.BUILDING_NAME = buildingName.getText().toString();
             WifiInfo.USER_NAME = usersName.getText().toString();
@@ -341,6 +451,20 @@ public class MapData extends AppCompatActivity {
     }
 
     /**
+     * Used to draw out paths with multiple turns
+     */
+    void displayPDRPaths(){
+        allPaths = new RetrieveCollectedPaths(1);
+        for(int i = 0; i < allPaths.polyLinesList.size(); i++){
+            if(allPaths.taggedFloors.get(i) == currentFloor){
+                map.addPolyline(allPaths.polyLinesList.get(i)
+                        .width(3)
+                        .color(Color.RED));
+            }
+        }
+    }
+
+    /**
      * Draw out the past paths that the user has walked (from local storage). Based on title of text files
      */
     void drawCollectedPaths(){
@@ -363,7 +487,12 @@ public class MapData extends AppCompatActivity {
         mapClickCount = 0;
         map.clear();
         //wipes markers then re-draws paths
-        drawCollectedPaths();
+        if(pdrCheckBox.isChecked()){
+            displayPDRPaths();
+        }
+        else {
+            drawCollectedPaths();
+        }
     }
 
     /**
