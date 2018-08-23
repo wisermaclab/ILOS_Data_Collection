@@ -616,13 +616,15 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
         //y is sin of theta
         //x is cos of theta
         System.out.println("TURNED INFO " + findDistance(new LatLng(lat, lon), currentCheckPoint)[0] + ", " + currentCheckPoint.toString());
-        if(!enableGyro && mapCheckPoints.indexOf(currentCheckPoint)!=mapCheckPoints.size()-1 && mapHeadings.indexOf(currentHeading)!=mapHeadings.size()-1 && findDistance(new LatLng(lat, lon), currentCheckPoint)[0] < 1.5*STEP_LENGTH){
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    Toast.makeText(getBaseContext(), "TURN NOW", Toast.LENGTH_SHORT).show();
-                }
-            });
+        if(!enableGyro && mapCheckPoints.indexOf(currentCheckPoint)!=mapCheckPoints.size()-1 && mapHeadings.indexOf(currentHeading)!=mapHeadings.size()-1 && findDistance(new LatLng(lat, lon), currentCheckPoint)[0] < 4*STEP_LENGTH){
+            if(findDistance(new LatLng(lat, lon), currentCheckPoint)[0] < STEP_LENGTH) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(getBaseContext(), "TURN NOW", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
             enableGyro = true;
         }
         else if(enableGyro && findDistance(new LatLng(lat, lon), currentCheckPoint)[0] > 1.5*STEP_LENGTH){
