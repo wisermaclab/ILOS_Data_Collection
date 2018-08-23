@@ -700,14 +700,12 @@ public class WifiInfo extends AppCompatActivity implements SensorEventListener, 
             entries[2] = Double.toString(scanCoordsPDR.get(i).getLatitude());
             entries[3] = Double.toString(scanCoordsPDR.get(i).getLongitude());
             String output = "";
-            if(!entries[2].equals("-1") && !entries[3].equals("-1")) {
                 for (int j = 0; j < entries.length; j++) {
                     if (j == entries.length - 1) {
                         output = output + entries[j];
                     } else {
                         output = output + entries[j] + ",";
                     }
-                }
                 //Creates new output list by replacing the latitude and longitude in the original. This list will later be written to storage
                 replacedOutput.add(output);
             }
